@@ -4,6 +4,12 @@
 #include <inttypes.h>
 
 
+typedef struct {
+    size_t payload_sz;
+    void *payload_addr;
+} mem_meta;
+
+
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
 void* m61_malloc(size_t sz, const char* file, int line);
@@ -64,5 +70,9 @@ void m61_printleakreport(void);
 void* base_malloc(size_t sz);
 void base_free(void* ptr);
 void base_malloc_disable(int is_disabled);
+
+
+void update_statistics_malloc(void *malloc_ptr, size_t allocated_sz);
+void update_statistics_free(size_t allocated_sz);
 
 #endif
