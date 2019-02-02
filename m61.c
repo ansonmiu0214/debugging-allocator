@@ -7,6 +7,8 @@
 #include <assert.h>
 
 // Utility macros
+#define MAGIC_NUMBER    0x12345678
+#define FOOTER_BYTES    4
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
@@ -20,6 +22,55 @@ static struct m61_statistics global_stats = {
     .heap_min = (char *) 0xffffffffffff,    // smallest allocated addr
     .heap_max = (char *) 0x000000000000     // largest allocated addr
 };
+
+static meta_t* meta_list = NULL;
+
+// List functions
+meta_t* metalist_find(void *payload_ptr) {
+    meta_t *curr = meta_list;
+    while (curr != NULL && curr->payload_addr != payload_ptr) {
+        curr = curr->next;
+    }
+    return curr;
+}
+
+void metalist_insert(meta_t *node) {
+    if (!meta_list) {
+        meta_list = node;
+        return;
+    }
+
+    meta_t *curr = meta_list;
+    while (curr->next != NULL) curr = curr->next;
+    curr->next = node;
+}
+
+void metalist_remove(void *payload_ptr) {
+    if (!meta_list) {
+        // ERROR: cannot remove from empty list
+        return;
+    }
+
+    if (meta_list->payload_addr == payload_ptr) {
+        meta_list = meta_list->next;
+        return;
+    }
+
+    meta_t *prev = NULL;
+    meta_t *curr = meta_list;
+
+    while (curr != NULL && curr->payload_addr != payload_ptr) {
+        prev = curr;
+        curr = curr->next;
+    }
+
+    if (!curr) {
+        // Error: cannot find in the list
+        return;
+    }
+
+    prev->next = curr->next;
+}
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
@@ -38,8 +89,8 @@ void* m61_malloc(size_t sz, const char* file, int line) {
         return NULL;
     }
 
-    size_t meta_size = sizeof(mem_meta);
-    size_t required_size = sz + meta_size;
+    size_t meta_size = sizeof(meta_t);
+    size_t required_size = meta_size + sz + FOOTER_BYTES;
     void *malloc_ptr = base_malloc(required_size);
 
     if (!malloc_ptr) {
@@ -49,12 +100,20 @@ void* m61_malloc(size_t sz, const char* file, int line) {
         return malloc_ptr;
     }
     
-    mem_meta *meta_ptr = (mem_meta *) malloc_ptr;
+    meta_t *meta_ptr = (meta_t *) malloc_ptr;
     void *payload_ptr = (void *) ((char *) (malloc_ptr + meta_size));
 
     // Initialise meta data
     meta_ptr->payload_sz = sz;
     meta_ptr->payload_addr = payload_ptr;
+    meta_ptr->line = line;
+    meta_ptr->next = NULL;
+
+    metalist_insert(meta_ptr);
+
+    // Initialise footer
+    int *footer = (int *) ((char *) (payload_ptr + sz));
+    *footer = MAGIC_NUMBER;
 
     update_statistics_malloc(payload_ptr, sz);
     return payload_ptr;
@@ -81,18 +140,51 @@ void update_statistics_malloc(void *payload_ptr, size_t payload_sz) {
 ///    `file`:`line`.
 
 void m61_free(void *ptr, const char *file, int line) {
-    (void) file, (void) line;   // avoid uninitialized variable warnings
+    // (void) file, (void) line;   // avoid uninitialized variable warnings
 
     if (!ptr) {
         // Cannot free null pointer
         return;
     }
 
-    size_t meta_sz = sizeof(mem_meta);
-    mem_meta *meta_ptr = (mem_meta *) ((char *) (ptr - meta_sz));
+    // Check if pointer was once allocated OR pointer is in block of allocated
+    // Do 2 checks in one loop so cannot use the `metalist_find` function
+    meta_t *curr;
+    for (curr = meta_list; curr != NULL && curr->payload_addr != ptr; curr = curr->next) {
 
+        // Define min/max range
+        void *min_addr = curr->payload_addr;
+        void *max_addr = (void *) ((char *) min_addr + curr->payload_sz);
+        int malloc_line = curr->line;
+
+        if (ptr > min_addr && ptr < max_addr) {
+           printf("MEMORY BUG: %s:%d: invalid free of pointer %p, not allocated\n", file, line, ptr);
+           printf("  %s:%d: %p is %ld bytes inside a %zu byte region allocated here\n", file, malloc_line, ptr, ptr - min_addr, curr->payload_sz);
+           return;
+        }
+
+    }
+
+    if (!curr) {
+        printf("MEMORY BUG: %s:%d: invalid free of pointer %p, not in heap\n", file, line, ptr);
+        return;
+    }
+
+    size_t meta_sz = sizeof(meta_t);
+    meta_t *meta_ptr = (meta_t *) ((char *) (ptr - meta_sz));
     size_t payload_sz = meta_ptr->payload_sz;
+
+    // Detect wild write
+    int *footer = (int *) ((char *) (ptr + payload_sz));
+    
+    if (*footer != MAGIC_NUMBER) {
+        printf("MEMORY BUG: %s:%d: detected wild write during free of pointer %p\n", file, line, ptr);
+        return;
+    }
+
     update_statistics_free(payload_sz);
+
+    metalist_remove(ptr);
 
     base_free(meta_ptr);
 }
@@ -118,7 +210,16 @@ void* m61_realloc(void* ptr, size_t sz, const char* file, int line) {
     if (ptr && new_ptr) {
         // Copy the data from `ptr` into `new_ptr`.
         // To do that, we must figure out the size of allocation `ptr`.
-        // Your code here (to fix test014).
+
+        meta_t *node = metalist_find(ptr);
+        if (!node) {
+            printf("MEMORY BUG: %s:%d: invalid realloc of pointer %p, not in heap\n", file, line, ptr);
+            return NULL;
+        }
+
+        // meta_t *meta_ptr = (meta_t *) ((char *) ptr - sizeof(meta_t));
+        // size_t old_sz = meta_ptr->payload_sz;
+        memcpy(new_ptr, ptr, sz);
     }
     m61_free(ptr, file, line);
     return new_ptr;
@@ -133,8 +234,16 @@ void* m61_realloc(void* ptr, size_t sz, const char* file, int line) {
 ///    The allocation request was at location `file`:`line`.
 
 void* m61_calloc(size_t nmemb, size_t sz, const char* file, int line) {
-    // Your code here (to fix test016).
-    void* ptr = m61_malloc(nmemb * sz, file, line);
+    size_t total_sz = nmemb * sz;
+
+    // Overflow check
+    if (nmemb > total_sz) {
+        global_stats.nfail++;
+        global_stats.fail_size += total_sz;
+        return NULL;
+    }
+
+    void* ptr = m61_malloc(total_sz, file, line);
     if (ptr) {
         memset(ptr, 0, nmemb * sz);
     }
@@ -169,5 +278,7 @@ void m61_printstatistics(void) {
 ///    memory.
 
 void m61_printleakreport(void) {
-    // Your code here.
+    for (meta_t *curr = meta_list; curr != NULL; curr = curr->next) {
+        printf("LEAK CHECK: test???.c:%d: allocated object %p with size %zu\n", curr->line, curr->payload_addr, curr->payload_sz);
+    }
 }

@@ -4,10 +4,12 @@
 #include <inttypes.h>
 
 
-typedef struct {
+typedef struct meta {
     size_t payload_sz;
     void *payload_addr;
-} mem_meta;
+    int line;
+    struct meta *next;
+} meta_t;
 
 
 /// m61_malloc(sz, file, line)
@@ -70,6 +72,10 @@ void m61_printleakreport(void);
 void* base_malloc(size_t sz);
 void base_free(void* ptr);
 void base_malloc_disable(int is_disabled);
+
+void metalist_insert(meta_t *node);
+meta_t* metalist_find(void *payload_ptr);
+void metalist_remove(void *payload_ptr);
 
 
 void update_statistics_malloc(void *malloc_ptr, size_t allocated_sz);
