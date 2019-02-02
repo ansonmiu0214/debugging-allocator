@@ -6,6 +6,17 @@
 #include <inttypes.h>
 #include <assert.h>
 
+static struct m61_statistics global_stats = {
+    .nactive = 0,                        // # active allocations
+    .active_size = 0,                    // # bytes in active allocations
+    .ntotal = 0,                         // # total allocations
+    .total_size = 0,                     // # bytes in total allocations
+    .nfail = 0,                          // # failed allocation attempts
+    .fail_size = 0,                      // # bytes in failed alloc attempts
+    .heap_min = (char *) 0x00000000,     // smallest allocated addr
+    .heap_max = (char *) 0xffffffff      // largest allocated addr
+};
+
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
 ///    The memory is not initialized. If `sz == 0`, then m61_malloc may
@@ -75,9 +86,7 @@ void* m61_calloc(size_t nmemb, size_t sz, const char* file, int line) {
 ///    Store the current memory statistics in `*stats`.
 
 void m61_getstatistics(struct m61_statistics* stats) {
-    // Stub: set all statistics to enormous numbers
-    memset(stats, 255, sizeof(struct m61_statistics));
-    // Your code here.
+    *stats = global_stats;
 }
 
 
