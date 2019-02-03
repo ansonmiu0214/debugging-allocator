@@ -14,6 +14,9 @@
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
+#define BITS_PER_INT    32
+#define ROWS_NEEDED     (HIGHEST_ADDR / 32) + 1
+
 static struct m61_statistics global_stats = {
     .nactive = 0,                           // # active allocations
     .active_size = 0,                       // # bytes in active allocations
@@ -73,6 +76,10 @@ void metalist_remove(void *payload_ptr) {
 
     prev->next = curr->next;
 }
+
+static int frees_bitmap[ROWS_NEEDED];
+
+// Bitmap function (0 iff not freed)
 
 /// m61_malloc(sz, file, line)
 ///    Return a pointer to `sz` bytes of newly-allocated dynamic memory.
