@@ -7,6 +7,8 @@
 #include <assert.h>
 
 // Utility macros
+#define LOWEST_ADDR     0x00000000
+#define HIGHEST_ADDR    0xffffffff
 #define MAGIC_NUMBER    0x12345678
 #define FOOTER_BYTES    4
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -19,8 +21,8 @@ static struct m61_statistics global_stats = {
     .total_size = 0,                        // # bytes in total allocations
     .nfail = 0,                             // # failed allocation attempts
     .fail_size = 0,                         // # bytes in failed alloc attempts
-    .heap_min = (char *) 0xffffffffffff,    // smallest allocated addr
-    .heap_max = (char *) 0x000000000000     // largest allocated addr
+    .heap_min = (char *) 0xfffffffffff,    // smallest allocated addr
+    .heap_max = (char *) 0x00000000000     // largest allocated addr
 };
 
 static meta_t* meta_list = NULL;
@@ -99,13 +101,14 @@ void* m61_malloc(size_t sz, const char* file, int line) {
         global_stats.fail_size += sz;
         return malloc_ptr;
     }
-    
+
     meta_t *meta_ptr = (meta_t *) malloc_ptr;
     void *payload_ptr = (void *) ((char *) (malloc_ptr + meta_size));
 
     // Initialise meta data
     meta_ptr->payload_sz = sz;
     meta_ptr->payload_addr = payload_ptr;
+    meta_ptr->file = file;
     meta_ptr->line = line;
     meta_ptr->next = NULL;
 
@@ -237,9 +240,8 @@ void* m61_calloc(size_t nmemb, size_t sz, const char* file, int line) {
     size_t total_sz = nmemb * sz;
 
     // Overflow check
-    if (nmemb > total_sz) {
+    if (nmemb > total_sz || nmemb < 0 || sz < 0 || total_sz < 0 || total_sz > 0xffffffff) {
         global_stats.nfail++;
-        global_stats.fail_size += total_sz;
         return NULL;
     }
 
@@ -279,6 +281,6 @@ void m61_printstatistics(void) {
 
 void m61_printleakreport(void) {
     for (meta_t *curr = meta_list; curr != NULL; curr = curr->next) {
-        printf("LEAK CHECK: test???.c:%d: allocated object %p with size %zu\n", curr->line, curr->payload_addr, curr->payload_sz);
+        printf("LEAK CHECK: %s:%d: allocated object %p with size %zu\n", curr->file, curr->line, curr->payload_addr, curr->payload_sz);
     }
 }

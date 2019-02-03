@@ -7,6 +7,7 @@
 typedef struct meta {
     size_t payload_sz;
     void *payload_addr;
+    const char *file;
     int line;
     struct meta *next;
 } meta_t;
